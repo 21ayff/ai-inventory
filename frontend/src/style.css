@@ -1,0 +1,27 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 明确设置背景色和文字色，避免深色模式下出现黑底黑字 */
+  background-color: #ffffff;
+  color: #303133;
+  color-scheme: light;
+}
+
+/* 手机端：弹窗自适应宽度 */
+@media (max-width: 600px) {
+  .el-dialog {
+    width: 92% !important;
+  }
+}
