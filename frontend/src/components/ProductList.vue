@@ -12,13 +12,6 @@ const showBackToTop = ref(false)
 const replenishExpanded = ref(true)
 const highlightId = ref(null)
 
-// 响应式：检测手机端（屏幕宽度 <= 768px），手机端隐藏部分表格列
-const isMobile = ref(window.innerWidth <= 768)
-function handleResize() {
-  isMobile.value = window.innerWidth <= 768
-}
-window.addEventListener('resize', handleResize)
-
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const form = ref({})
@@ -423,7 +416,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('scroll', handleScroll)
-  window.removeEventListener('resize', handleResize)
 })
 </script>
 
@@ -488,19 +480,26 @@ onUnmounted(() => {
       <el-button type="success" @click="openAsk">AI问答</el-button>
     </div>
 
-    <el-table :data="products" v-loading="loading" border :row-class-name="rowClassName">
-      <el-table-column prop="name" label="商品名称" min-width="140" />
-      <el-table-column v-if="!isMobile" prop="sku" label="SKU" width="120" />
-      <el-table-column v-if="!isMobile" prop="unit" label="单位" width="80" />
-      <el-table-column prop="current_stock" label="当前库存" width="100" />
-      <el-table-column v-if="!isMobile" prop="min_stock" label="安全库存" width="100" />
-      <el-table-column v-if="!isMobile" prop="rop" label="订货点" width="100" />
-      <el-table-column label="操作" :width="isMobile ? 180 : 250" fixed="right">
+    <el-table :data="products" v-loading="loading" border :row-class-name="rowClassName" size="small">
+      <el-table-column prop="name" label="商品名称" min-width="100" />
+      <el-table-column prop="sku" label="SKU" width="90" />
+      <el-table-column prop="unit" label="单位" width="60" />
+      <el-table-column prop="current_stock" label="当前库存" width="80" />
+      <el-table-column prop="min_stock" label="安全库存" width="80" />
+      <el-table-column prop="rop" label="订货点" width="80" />
+      <el-table-column label="操作" width="80" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" type="success" @click="openStock(row, 'in')">入库</el-button>
-          <el-button size="small" type="warning" @click="openStock(row, 'out')">出库</el-button>
-          <el-button size="small" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="deleteProduct(row)">删除</el-button>
+          <el-popover trigger="click" placement="left" :width="160">
+            <template #reference>
+              <el-button size="small" type="primary">操作</el-button>
+            </template>
+            <div class="action-menu">
+              <el-button size="small" type="success" @click="openStock(row, 'in')">入库</el-button>
+              <el-button size="small" type="warning" @click="openStock(row, 'out')">出库</el-button>
+              <el-button size="small" @click="openEdit(row)">编辑</el-button>
+              <el-button size="small" type="danger" @click="deleteProduct(row)">删除</el-button>
+            </div>
+          </el-popover>
         </template>
       </el-table-column>
     </el-table>
@@ -802,6 +801,17 @@ onUnmounted(() => {
 .eoq-hint {
   color: var(--primary) !important;
   font-style: italic;
+}
+/* 操作菜单弹层：4个按钮纵向排列 */
+.action-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+.action-menu .el-button {
+  margin-left: 0 !important;
+  width: 100%;
 }
 @media (max-width: 600px) {
   .product-page {
