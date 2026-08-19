@@ -22,7 +22,7 @@ const DEFAULT_Z_SCORE = 1.65
 const DEFAULT_DEMAND_CV = 0.20
 const SHELF_LIFE_SAFE_RATIO = 0.5
 // EOQ 默认参数（与后端 eoq.py 默认值保持一致）
-const DEFAULT_ORDER_COST = 50
+const DEFAULT_ORDER_COST = 20
 const DEFAULT_HOLDING_COST_RATE = 0.25
 
 const defaultForm = () => ({
@@ -81,9 +81,11 @@ const calcParams = computed(() => {
     }
   }
 
-  // 7. 建议补货量 = max(目标库存 - 当前库存, EOQ)
-  const gap = Math.max(target_inventory - cur, 0)
-  const eoq = Math.round(Math.max(gap, eoq_value) * 100) / 100
+  // 7. 建议补货量 = min(目标库存 - 当前库存 + 提前期需求, EOQ)
+  //    按目标库存补货，补货后库存恢复到目标库存
+  //    EOQ 作为上限，防止单次补货过多占用资金
+  const gap = Math.max(target_inventory - cur + lead_time_demand, 0)
+  const eoq = eoq_value > 0 ? Math.round(Math.min(gap, eoq_value) * 100) / 100 : Math.round(gap * 100) / 100
 
   const sellable_days = cur > 0 ? Math.round((cur / d) * 100) / 100 : null
   return {
@@ -566,7 +568,7 @@ onUnmounted(() => {
               <p v-if="calcParams.shelf_life_cap !== null">保质期约束 = 日均销量 × 保质期 × 50% = {{ calcParams.daily_sales }} × {{ form.shelf_life_days }} × 50% = {{ calcParams.shelf_life_cap }}</p>
               <p v-if="calcParams.eoq_value > 0">EOQ 经济订货量 = √(2 × 年需求 × 订货成本 / 持有成本) = √(2 × {{ calcParams.daily_sales * 365 }} × {{ DEFAULT_ORDER_COST }} / {{ form.cost_price * DEFAULT_HOLDING_COST_RATE }}) ≈ {{ calcParams.eoq_value }}</p>
               <p v-else class="eoq-hint">EOQ 经济订货量：请填写「成本价」后计算（公式：√(2 × 年需求 × 订货成本 / 持有成本)）</p>
-              <p>建议补货量 = max(目标库存 - 当前库存<span v-if="calcParams.eoq_value > 0">, EOQ</span>) = {{ calcParams.eoq }}</p>
+              <p>建议补货量 = min(目标库存 - 当前库存 + 提前期需求<span v-if="calcParams.eoq_value > 0">, EOQ</span>) = {{ calcParams.eoq }}</p>
               <p class="eoq-hint">注：EOQ 预览用默认参数（订货成本 {{ DEFAULT_ORDER_COST }} 元/次，持有成本率 {{ DEFAULT_HOLDING_COST_RATE }}）。实际值以「EOQ 设置」中的配置为准。<span v-if="calcParams.eoq_value === 0">未填写成本价时，建议补货量暂不考虑 EOQ 约束。</span></p>
             </el-collapse-item>
           </el-collapse>

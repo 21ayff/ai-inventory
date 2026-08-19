@@ -12,7 +12,7 @@ Base.metadata.create_all(bind=engine)
 
 # 默认配置项
 DEFAULT_SETTINGS = {
-    "order_cost": "50",          # 每次订货成本（元/次）
+    "order_cost": "20",          # 每次订货成本（元/次，便利店单SKU分摊成本）
     "holding_cost_rate": "0.25", # 持有成本率（成本价 × 25%）
 }
 

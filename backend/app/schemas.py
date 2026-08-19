@@ -149,7 +149,7 @@ class AskResponse(BaseModel):
 
 class SettingsOut(BaseModel):
     """订货成本和持有成本率（全局配置）"""
-    order_cost: float = 50.0          # 每次订货成本（元/次）
+    order_cost: float = 20.0          # 每次订货成本（元/次，便利店单SKU分摊成本）
     holding_cost_rate: float = 0.25   # 持有成本率（如 0.25 表示 25%）
 
 

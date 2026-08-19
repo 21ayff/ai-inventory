@@ -19,7 +19,10 @@
 3. 订货点     = 提前期需求 + 安全库存
 4. 目标库存   = 日均销量 × 分类目标库存天数
 5. 保质期约束 = 日均销量 × 保质期天数 × 50%
-6. 建议补货量 = max(目标库存 - 当前库存, EOQ)，取较大值确保达到经济订货量
+6. 建议补货量 = min(目标库存 - 当前库存 + 提前期需求, EOQ)
+   - 按目标库存补货，补货后库存恢复到目标库存
+   - EOQ 作为上限，防止单次补货过多占用资金
+   - 不填 EOQ 时，建议补货量 = 目标库存 - 当前库存 + 提前期需求
 """
 
 import math
@@ -88,10 +91,12 @@ def calc_stock_params(
         shelf_life_cap = daily_sales * shelf_life_days * SHELF_LIFE_SAFE_RATIO
         target_inventory = min(target_inventory, shelf_life_cap)
 
-    # 6. 建议补货量 = max(目标库存 - 当前库存, EOQ)，取较大值确保达到经济订货量
-    gap = max(target_inventory - current_stock, 0)
+    # 6. 建议补货量 = min(目标库存 - 当前库存 + 提前期需求, EOQ)
+    #    按目标库存补货，补货后库存恢复到目标库存
+    #    EOQ 作为上限，防止单次补货过多占用资金
+    gap = max(target_inventory - current_stock + lead_time_demand, 0)
     if eoq and eoq > 0:
-        suggest_qty = max(gap, eoq)
+        suggest_qty = min(gap, eoq)
     else:
         suggest_qty = gap
     suggest_qty = round(suggest_qty, 2)

@@ -16,7 +16,7 @@ watch(dialogVisible, (v) => {
 })
 
 const form = ref({
-  order_cost: 50,
+  order_cost: 20,
   holding_cost_rate: 0.25,
 })
 const loading = ref(false)
@@ -87,10 +87,10 @@ async function saveSettings() {
       </el-form>
       <div class="formula-explain">
         <p><strong>计算示例：</strong></p>
-        <p>假设商品日均销量 10 件，成本价 5 元，订货成本 50 元/次，持有成本率 25%</p>
+        <p>假设商品日均销量 10 件，成本价 5 元，订货成本 20 元/次，持有成本率 25%</p>
         <p>年需求量 = 10 × 365 = 3650 件</p>
         <p>持有成本 = 5 × 0.25 = 1.25 元/件</p>
-        <p>EOQ = √(2 × 3650 × 50 / 1.25) ≈ 540 件</p>
+        <p>EOQ = √(2 × 3650 × 20 / 1.25) ≈ 342 件</p>
       </div>
     </div>
     <template #footer>

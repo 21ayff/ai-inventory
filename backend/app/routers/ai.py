@@ -78,7 +78,7 @@ def get_replenish_suggestions(db: Session = Depends(get_db)):
         elif trend == "下降":
             trend_desc = f"；销量趋势提示：近期实际日均销量 {actual_daily}，低于填写值 {p.daily_sales}，建议更新"
         calc = (
-            f"补货量 = max(目标库存 - 当前库存, EOQ)，"
+            f"补货量 = min(目标库存 - 当前库存 + 提前期需求, EOQ)，"
             f"其中目标库存 = 日均销量 × {target_days}天"
             + (f"，并受保质期约束" if p.shelf_life_days else "")
             + f"，标准差来源：{std_source}"

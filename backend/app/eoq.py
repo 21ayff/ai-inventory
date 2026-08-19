@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .models import Setting
 
 # 默认配置（当 Setting 表没有对应配置时使用）
-DEFAULT_ORDER_COST = 50.0       # 默认每次订货成本 50 元
+DEFAULT_ORDER_COST = 20.0       # 默认每次订货成本 20 元（便利店单SKU分摊成本）
 DEFAULT_HOLDING_COST_RATE = 0.25  # 默认持有成本率 25%
 
 
@@ -74,27 +74,3 @@ def calc_eoq(
     # EOQ = √(2 × D × S / H)
     eoq = math.sqrt(2 * annual_demand * order_cost / holding_cost_per_unit)
     return round(eoq, 2)
-
-
-def calc_suggest_qty_with_eoq(
-    target_inventory: float,
-    current_stock: float,
-    eoq: float,
-):
-    """结合目标库存和 EOQ 计算建议补货量
-
-    策略：取 max(目标库存 - 当前库存, EOQ)，确保达到经济订货量
-    - 如果目标库存与当前库存的差额较大，按目标库存补货
-    - 如果差额小于 EOQ，则按 EOQ 补货（避免小批量订货成本过高）
-
-    参数：
-        target_inventory: 目标库存量
-        current_stock: 当前库存
-        eoq: 经济订货量（为 0 时退化为 max(目标-当前, 0)）
-
-    返回：建议补货量
-    """
-    gap = max(target_inventory - current_stock, 0)
-    if eoq <= 0:
-        return round(gap, 2)
-    return round(max(gap, eoq), 2)
