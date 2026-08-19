@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import engine, Base
 from . import models  # 确保模型被注册
-from .routers import auth, products, stock, ai, dashboard, stats
+from .routers import auth, products, stock, ai, dashboard, stats, settings, analysis
 
 # 创建所有表（骨架阶段直接建表，后续可改为 Alembic 迁移）
 Base.metadata.create_all(bind=engine)
@@ -27,6 +27,8 @@ app.include_router(stock.router)
 app.include_router(ai.router)
 app.include_router(dashboard.router)
 app.include_router(stats.router)
+app.include_router(settings.router)
+app.include_router(analysis.router)
 
 
 @app.get("/api/health")

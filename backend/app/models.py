@@ -26,6 +26,9 @@ class Category(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    # 库存策略：目标库存天数（覆盖周期）和服务水平 Z 值
+    target_days = Column(Float, default=7.0)    # 目标库存天数，默认 7 天
+    z_score = Column(Float, default=1.65)       # 服务水平系数，默认 95%（Z=1.65）
 
 
 class Product(Base):
@@ -43,7 +46,11 @@ class Product(Base):
     min_stock = Column(Float, default=0)        # 安全库存（AI 自动计算）
     rop = Column(Float, default=0)              # 订货点（AI 自动计算）
     eoq = Column(Float, default=0)              # 建议补货量（AI 自动计算，非严格 EOQ）
+    shelf_life_days = Column(Float, nullable=True)  # 保质期天数，可空
+    cost_price = Column(Float, nullable=True)       # 成本价，可空
     has_expiry = Column(Boolean, default=False)
+    supplier_name = Column(String, nullable=True)   # 供应商名称，可空
+    supplier_phone = Column(String, nullable=True)   # 供应商电话，可空
     deleted = Column(Boolean, default=False)
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)

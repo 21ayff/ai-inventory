@@ -8,12 +8,23 @@ from sqlalchemy.orm import Session
 from openpyxl import Workbook, load_workbook
 
 from ..database import get_db
-from ..models import Product
+from ..models import Category, Product
 from ..schemas import ProductCreate, ProductUpdate, ProductOut
 from ..dependencies import get_current_user
-from ..stock_math import calc_stock_params
+from ..stock_math import calc_stock_params, DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
+from ..sales_stats import calc_sales_std
+from ..eoq import calc_eoq, get_order_cost, get_holding_cost_rate
 
 router = APIRouter(prefix="/api/products", tags=["products"], dependencies=[Depends(get_current_user)])
+
+
+def _category_strategy(db: Session, category_id: int | None):
+    """读取分类的库存策略，未选择分类时返回默认值"""
+    if category_id:
+        cat = db.query(Category).filter(Category.id == category_id).first()
+        if cat:
+            return cat.target_days, cat.z_score
+    return DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
 
 
 @router.get("", response_model=list[ProductOut])
@@ -42,6 +53,12 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     if not data.name:
         raise HTTPException(status_code=400, detail="商品名称不能为空")
 
+    # 空字符串 SKU 视为未填写，转为 None 避免触发 unique 冲突
+    if data.sku is not None:
+        data.sku = data.sku.strip()
+        if data.sku == "":
+            data.sku = None
+
     if data.sku:
         exists = db.query(Product).filter(
             Product.sku == data.sku, Product.deleted == False
@@ -49,8 +66,23 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
         if exists:
             raise HTTPException(status_code=400, detail="SKU 已存在")
 
-    # 根据日均销量和到货天数自动计算三个专业参数
-    min_stock, rop, eoq = calc_stock_params(data.daily_sales, data.lead_time_days)
+    # 读取分类策略，自动计算三个专业参数
+    target_days, z_score = _category_strategy(db, data.category_id)
+    # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
+    order_cost = get_order_cost(db)
+    holding_cost_rate = get_holding_cost_rate(db)
+    eoq_value = calc_eoq(data.daily_sales, data.cost_price, order_cost, holding_cost_rate)
+    # 新增商品时还没有历史出库记录，sales_std 传 None，自动回退到估算（日均销量 × 20%）
+    min_stock, rop, eoq = calc_stock_params(
+        daily_sales=data.daily_sales,
+        lead_time_days=data.lead_time_days,
+        current_stock=data.current_stock,
+        category_target_days=target_days,
+        category_z_score=z_score,
+        shelf_life_days=data.shelf_life_days,
+        sales_std=None,
+        eoq=eoq_value,
+    )
 
     product = Product(
         name=data.name,
@@ -60,6 +92,10 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
         current_stock=data.current_stock,
         daily_sales=data.daily_sales,
         lead_time_days=data.lead_time_days,
+        shelf_life_days=data.shelf_life_days,
+        cost_price=data.cost_price,
+        supplier_name=data.supplier_name,
+        supplier_phone=data.supplier_phone,
         min_stock=min_stock,
         rop=rop,
         eoq=eoq,
@@ -76,8 +112,8 @@ def download_import_template():
     wb = Workbook()
     ws = wb.active
     ws.title = "商品导入模板"
-    ws.append(["商品名称", "SKU", "单位", "当前库存", "日均销量", "平均到货天数"])
-    ws.append(["示例商品", "SKU001", "个", 100, 10, 7])
+    ws.append(["商品名称", "SKU", "单位", "当前库存", "日均销量", "平均到货天数", "保质期天数", "成本价"])
+    ws.append(["示例商品", "SKU001", "个", 100, 10, 7, 90, 5.0])
 
     buf = BytesIO()
     wb.save(buf)
@@ -114,6 +150,18 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
         except (ValueError, TypeError):
             return None
 
+    def parse_optional_number(v):
+        """解析可空数值：空值返回 None，非法值返回 None"""
+        if v is None:
+            return None
+        s = str(v).strip()
+        if s == "":
+            return None
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
     success = 0
     failed = []
 
@@ -128,6 +176,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
         current_stock = parse_number(row[3] if len(row) > 3 else None)
         daily_sales = parse_number(row[4] if len(row) > 4 else None)
         lead_time_days = parse_number(row[5] if len(row) > 5 else None)
+        shelf_life_days = parse_optional_number(row[6] if len(row) > 6 else None)
+        cost_price = parse_optional_number(row[7] if len(row) > 7 else None)
 
         if not name:
             failed.append(f"第{i}行：商品名称为空")
@@ -137,8 +187,21 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
             failed.append(f"第{i}行：数值格式错误")
             continue
 
-        # 根据日均销量和到货天数自动计算三个专业参数
-        min_stock, rop, eoq = calc_stock_params(daily_sales, lead_time_days)
+        # 导入时不含分类信息，使用默认策略计算三个专业参数
+        target_days, z_score = _category_strategy(db, None)
+        # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
+        order_cost = get_order_cost(db)
+        holding_cost_rate = get_holding_cost_rate(db)
+        eoq_value = calc_eoq(daily_sales, cost_price, order_cost, holding_cost_rate)
+        min_stock, rop, eoq = calc_stock_params(
+            daily_sales=daily_sales,
+            lead_time_days=lead_time_days,
+            current_stock=current_stock,
+            category_target_days=target_days,
+            category_z_score=z_score,
+            shelf_life_days=shelf_life_days,
+            eoq=eoq_value,
+        )
 
         # 按名称查找已有商品
         existing = db.query(Product).filter(
@@ -163,6 +226,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
             existing.current_stock = current_stock
             existing.daily_sales = daily_sales
             existing.lead_time_days = lead_time_days
+            existing.shelf_life_days = shelf_life_days
+            existing.cost_price = cost_price
             existing.min_stock = min_stock
             existing.rop = rop
             existing.eoq = eoq
@@ -176,6 +241,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
                     current_stock=current_stock,
                     daily_sales=daily_sales,
                     lead_time_days=lead_time_days,
+                    shelf_life_days=shelf_life_days,
+                    cost_price=cost_price,
                     min_stock=min_stock,
                     rop=rop,
                     eoq=eoq,
@@ -215,6 +282,12 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
 
     update_data = data.model_dump(exclude_unset=True)
 
+    # 空字符串 SKU 视为未填写，转为 None 避免触发 unique 冲突
+    if "sku" in update_data and update_data["sku"] is not None:
+        update_data["sku"] = update_data["sku"].strip()
+        if update_data["sku"] == "":
+            update_data["sku"] = None
+
     if update_data.get("sku"):
         exists = db.query(Product).filter(
             Product.sku == update_data["sku"],
@@ -227,9 +300,23 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     for key, value in update_data.items():
         setattr(product, key, value)
 
-    # 根据日均销量和到货天数重新计算库存参数（日均销量为 0 时三个参数都归 0）
+    # 读取分类策略，重新计算库存参数（日均销量为 0 时三个参数都归 0）
+    target_days, z_score = _category_strategy(db, product.category_id)
+    # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
+    order_cost = get_order_cost(db)
+    holding_cost_rate = get_holding_cost_rate(db)
+    eoq_value = calc_eoq(product.daily_sales, product.cost_price, order_cost, holding_cost_rate)
+    # 查询历史销量标准差（数据不足时返回 None，自动回退到估算）
+    sales_std, _, _ = calc_sales_std(db, product.id)
     product.min_stock, product.rop, product.eoq = calc_stock_params(
-        product.daily_sales, product.lead_time_days
+        daily_sales=product.daily_sales,
+        lead_time_days=product.lead_time_days,
+        current_stock=product.current_stock,
+        category_target_days=target_days,
+        category_z_score=z_score,
+        shelf_life_days=product.shelf_life_days,
+        sales_std=sales_std,
+        eoq=eoq_value,
     )
 
     db.commit()

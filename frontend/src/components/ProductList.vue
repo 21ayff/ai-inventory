@@ -1,16 +1,29 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { apiFetch } from '../api'
 
 const products = ref([])
 const search = ref('')
 const stockFilter = ref('')
 const loading = ref(false)
+const showBackToTop = ref(false)
+const replenishExpanded = ref(true)
+const highlightId = ref(null)
 
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const form = ref({})
+
+// 默认分类策略（与后端 stock_math.py 默认值保持一致）
+const DEFAULT_TARGET_DAYS = 7
+const DEFAULT_Z_SCORE = 1.65
+const DEFAULT_DEMAND_CV = 0.20
+const SHELF_LIFE_SAFE_RATIO = 0.5
+// EOQ 默认参数（与后端 eoq.py 默认值保持一致）
+const DEFAULT_ORDER_COST = 50
+const DEFAULT_HOLDING_COST_RATE = 0.25
 
 const defaultForm = () => ({
   name: '',
@@ -20,6 +33,10 @@ const defaultForm = () => ({
   current_stock: 0,
   daily_sales: 0,
   lead_time_days: 0,
+  shelf_life_days: null,
+  cost_price: null,
+  supplier_name: '',
+  supplier_phone: '',
 })
 
 // AI 自动计算库存参数预览（公式与后端 stock_math.py 保持一致）
@@ -29,13 +46,58 @@ const calcParams = computed(() => {
   if (d <= 0) {
     return { daily_sales: d, lead_time_days: l, lead_time_demand: 0, min_stock: 0, rop: 0, eoq: 0, sellable_days: null }
   }
-  const lead_time_demand = d * l
-  const min_stock = Math.round(lead_time_demand * 0.3 * 100) / 100
-  const rop = Math.round((lead_time_demand + min_stock) * 100) / 100
-  const eoq = Math.round(d * 30 * 100) / 100
+
   const cur = Number(form.value.current_stock) || 0
+  const shelfLife = form.value.shelf_life_days ? Number(form.value.shelf_life_days) : null
+
+  // 1. 提前期需求
+  const lead_time_demand = d * l
+
+  // 2. 安全库存 = Z × σ_d × √L，没有历史标准差时用 20% 波动系数估算
+  const sigma_d = d * DEFAULT_DEMAND_CV
+  const min_stock = Math.round(DEFAULT_Z_SCORE * sigma_d * Math.sqrt(Math.max(l, 0)) * 100) / 100
+
+  // 3. 订货点
+  const rop = Math.round((lead_time_demand + min_stock) * 100) / 100
+
+  // 4. 目标库存
+  let target_inventory = d * DEFAULT_TARGET_DAYS
+
+  // 5. 保质期约束
+  let shelf_life_cap = null
+  if (shelfLife && shelfLife > 0) {
+    shelf_life_cap = d * shelfLife * SHELF_LIFE_SAFE_RATIO
+    target_inventory = Math.min(target_inventory, shelf_life_cap)
+  }
+
+  // 6. EOQ 经济订货量（预览用默认参数，保存时后端用实际设置值）
+  const costPrice = form.value.cost_price ? Number(form.value.cost_price) : null
+  let eoq_value = 0
+  if (costPrice && costPrice > 0) {
+    const annualDemand = d * 365
+    const holdingCostPerUnit = costPrice * DEFAULT_HOLDING_COST_RATE
+    if (holdingCostPerUnit > 0) {
+      eoq_value = Math.round(Math.sqrt(2 * annualDemand * DEFAULT_ORDER_COST / holdingCostPerUnit) * 100) / 100
+    }
+  }
+
+  // 7. 建议补货量 = max(目标库存 - 当前库存, EOQ)
+  const gap = Math.max(target_inventory - cur, 0)
+  const eoq = Math.round(Math.max(gap, eoq_value) * 100) / 100
+
   const sellable_days = cur > 0 ? Math.round((cur / d) * 100) / 100 : null
-  return { daily_sales: d, lead_time_days: l, lead_time_demand: Math.round(lead_time_demand * 100) / 100, min_stock, rop, eoq, sellable_days }
+  return {
+    daily_sales: d,
+    lead_time_days: l,
+    lead_time_demand: Math.round(lead_time_demand * 100) / 100,
+    min_stock,
+    rop,
+    eoq,
+    eoq_value,
+    sellable_days,
+    target_days: DEFAULT_TARGET_DAYS,
+    shelf_life_cap: shelf_life_cap ? Math.round(shelf_life_cap * 100) / 100 : null,
+  }
 })
 
 async function loadProducts() {
@@ -260,38 +322,135 @@ async function doImport() {
   }
 }
 
+// ---------- 回到顶部 ----------
+function handleScroll() {
+  const el = document.querySelector('.product-page')
+  if (el) {
+    showBackToTop.value = el.scrollTop > 200 || window.scrollY > 200
+  } else {
+    showBackToTop.value = window.scrollY > 200
+  }
+}
+
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+  const el = document.querySelector('.product-page')
+  if (el) el.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+// ---------- 补货提醒定位到商品 ----------
+function goToProduct(productId) {
+  // 先找到商品信息
+  const product = products.value.find(p => p.id === productId)
+  if (!product) {
+    ElMessage.warning('未找到该商品，请刷新页面重试')
+    return
+  }
+
+  // 关闭补货面板
+  replenishExpanded.value = false
+  // 高亮商品行
+  highlightId.value = productId
+
+  // 从补货建议里找到对应的建议量
+  const suggestion = suggestions.value.find(s => s.product_id === productId)
+  const suggestQty = suggestion ? suggestion.suggest_quantity : 0
+
+  // 弹出确认框，询问是否立即补货
+  ElMessageBox.confirm(
+    `商品：${product.name}\n` +
+    `当前库存：${product.current_stock} ${product.unit}\n` +
+    `建议补货量：${suggestQty} ${product.unit}`,
+    '补货提醒',
+    {
+      confirmButtonText: '立即补货',
+      cancelButtonText: '仅定位',
+      type: 'warning',
+    }
+  ).then(() => {
+    // 用户点击「立即补货」：弹出入库对话框，预填建议补货量
+    stockForm.value = {
+      product_id: product.id,
+      product_name: product.name,
+      type: 'in',
+      quantity: suggestQty > 0 ? suggestQty : 1,
+      remark: '补货提醒-自动填入建议量',
+    }
+    stockDialogVisible.value = true
+  }).catch(() => {
+    // 用户点击「仅定位」或关闭：只滚动到商品行
+  })
+
+  // 等待 DOM 更新后滚动到对应行
+  nextTick(() => {
+    setTimeout(() => {
+      const highlightRow = document.querySelector('.highlight-row')
+      if (highlightRow) {
+        highlightRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      } else {
+        const table = document.querySelector('.el-table')
+        if (table) {
+          table.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }
+    }, 300)
+
+    // 5 秒后取消高亮
+    setTimeout(() => {
+      highlightId.value = null
+    }, 5000)
+  })
+}
+
+function rowClassName({ row }) {
+  return row.id === highlightId.value ? 'highlight-row' : ''
+}
+
 onMounted(() => {
   loadProducts()
   loadSuggestions()
+  window.addEventListener('scroll', handleScroll, { passive: true })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', handleScroll)
 })
 </script>
 
 <template>
   <div class="product-page">
     <div v-if="suggestions.length" class="replenish-area">
-      <h3 class="replenish-title">补货提醒（{{ suggestions.length }}）</h3>
-      <el-collapse>
-        <el-collapse-item
-          v-for="s in suggestions"
-          :key="s.product_id"
-          :name="s.product_id"
-        >
-          <template #title>
-            <span class="item-name">{{ s.product_name }}</span>
-            <el-tag :type="s.status === 'urgent' ? 'danger' : 'warning'" size="small">
-              {{ s.status === 'urgent' ? '紧急补货' : '建议补货' }}
-            </el-tag>
-            <span class="item-summary">
-              当前库存 {{ s.current_stock }} {{ s.unit }}，建议补 {{ s.suggest_quantity }} {{ s.unit }}
-            </span>
-          </template>
-          <div class="explain">
-            <p><strong>数据依据：</strong>{{ s.data_basis }}</p>
-            <p><strong>理论依据：</strong>{{ s.theory_basis }}</p>
-            <p><strong>计算过程：</strong>{{ s.calc_process }}</p>
-          </div>
-        </el-collapse-item>
-      </el-collapse>
+      <div class="replenish-header" @click="replenishExpanded = !replenishExpanded">
+        <span class="replenish-title">补货提醒（{{ suggestions.length }}）</span>
+        <el-icon class="expand-icon" :class="{ expanded: replenishExpanded }">
+          <ArrowDown />
+        </el-icon>
+      </div>
+      <div v-show="replenishExpanded" class="replenish-content">
+        <el-collapse>
+          <el-collapse-item
+            v-for="s in suggestions"
+            :key="s.product_id"
+            :name="s.product_id"
+          >
+            <template #title>
+              <span class="item-name">{{ s.product_name }}</span>
+              <el-tag :type="s.status === 'urgent' ? 'danger' : 'warning'" size="small">
+                {{ s.status === 'urgent' ? '紧急补货' : '建议补货' }}
+              </el-tag>
+              <span class="item-summary">
+                当前库存 {{ s.current_stock }} {{ s.unit }}，建议补 {{ s.suggest_quantity }} {{ s.unit }}
+              </span>
+            </template>
+            <div class="explain">
+              <p><strong>数据依据：</strong>{{ s.data_basis }}</p>
+              <p><strong>理论依据：</strong>{{ s.theory_basis }}</p>
+              <p><strong>计算过程：</strong>{{ s.calc_process }}</p>
+              <el-button size="small" type="primary" @click.stop="goToProduct(s.product_id)">定位到商品</el-button>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
     </div>
 
     <div class="toolbar">
@@ -319,7 +478,7 @@ onMounted(() => {
       <el-button type="success" @click="openAsk">AI问答</el-button>
     </div>
 
-    <el-table :data="products" v-loading="loading" border>
+    <el-table :data="products" v-loading="loading" border :row-class-name="rowClassName">
       <el-table-column prop="name" label="商品名称" min-width="140" />
       <el-table-column prop="sku" label="SKU" width="120" />
       <el-table-column prop="unit" label="单位" width="80" />
@@ -362,6 +521,20 @@ onMounted(() => {
           <el-input-number v-model="form.lead_time_days" :min="0" />
           <span class="form-tip">天</span>
         </el-form-item>
+        <el-form-item label="保质期">
+          <el-input-number v-model="form.shelf_life_days" :min="0" :controls="false" />
+          <span class="form-tip">天（可选，不填则不约束）</span>
+        </el-form-item>
+        <el-form-item label="成本价">
+          <el-input-number v-model="form.cost_price" :min="0" :controls="false" />
+          <span class="form-tip">元/件（单价，非总价；用于 EOQ 计算）</span>
+        </el-form-item>
+        <el-form-item label="供应商名称">
+          <el-input v-model="form.supplier_name" placeholder="选填，如：张三粮油" />
+        </el-form-item>
+        <el-form-item label="供应商电话">
+          <el-input v-model="form.supplier_phone" placeholder="选填，如：13800138000" />
+        </el-form-item>
       </el-form>
 
       <div class="ai-calc-box">
@@ -386,9 +559,15 @@ onMounted(() => {
           <el-collapse class="ai-calc-basis">
             <el-collapse-item title="查看计算依据" name="1">
               <p>提前期需求 = 日均销量 × 到货天数 = {{ calcParams.daily_sales }} × {{ calcParams.lead_time_days }} = {{ calcParams.lead_time_demand }}</p>
-              <p>安全库存 = 提前期需求 × 30% = {{ calcParams.lead_time_demand }} × 30% ≈ {{ calcParams.min_stock }}</p>
+              <p>安全库存 = Z × 日销量标准差 × √到货天数 = {{ DEFAULT_Z_SCORE }} × ({{ calcParams.daily_sales }} × 20%) × √{{ calcParams.lead_time_days }} ≈ {{ calcParams.min_stock }}</p>
+              <p class="std-hint">注：此处为预览值（用 20% 估算标准差）。保存时后端会查询最近 30 天出库记录计算真实标准差，历史数据不足 7 天时仍用估算值。</p>
               <p>订货点 = 提前期需求 + 安全库存 = {{ calcParams.lead_time_demand }} + {{ calcParams.min_stock }} = {{ calcParams.rop }}</p>
-              <p>建议补货量 = 日均销量 × 30天 = {{ calcParams.daily_sales }} × 30 = {{ calcParams.eoq }}</p>
+              <p>目标库存 = 日均销量 × 目标库存天数 = {{ calcParams.daily_sales }} × {{ calcParams.target_days }} = {{ Math.round(calcParams.daily_sales * calcParams.target_days * 100) / 100 }}</p>
+              <p v-if="calcParams.shelf_life_cap !== null">保质期约束 = 日均销量 × 保质期 × 50% = {{ calcParams.daily_sales }} × {{ form.shelf_life_days }} × 50% = {{ calcParams.shelf_life_cap }}</p>
+              <p v-if="calcParams.eoq_value > 0">EOQ 经济订货量 = √(2 × 年需求 × 订货成本 / 持有成本) = √(2 × {{ calcParams.daily_sales * 365 }} × {{ DEFAULT_ORDER_COST }} / {{ form.cost_price * DEFAULT_HOLDING_COST_RATE }}) ≈ {{ calcParams.eoq_value }}</p>
+              <p v-else class="eoq-hint">EOQ 经济订货量：请填写「成本价」后计算（公式：√(2 × 年需求 × 订货成本 / 持有成本)）</p>
+              <p>建议补货量 = max(目标库存 - 当前库存<span v-if="calcParams.eoq_value > 0">, EOQ</span>) = {{ calcParams.eoq }}</p>
+              <p class="eoq-hint">注：EOQ 预览用默认参数（订货成本 {{ DEFAULT_ORDER_COST }} 元/次，持有成本率 {{ DEFAULT_HOLDING_COST_RATE }}）。实际值以「EOQ 设置」中的配置为准。<span v-if="calcParams.eoq_value === 0">未填写成本价时，建议补货量暂不考虑 EOQ 约束。</span></p>
             </el-collapse-item>
           </el-collapse>
         </template>
@@ -441,7 +620,7 @@ onMounted(() => {
 
     <el-dialog v-model="importVisible" title="导入 Excel" width="500px">
       <div class="import-tips">
-        <p>1. 先下载模板，按模板填写：商品名称、SKU、单位、当前库存、日均销量、到货天数</p>
+        <p>1. 先下载模板，按模板填写：商品名称、SKU、单位、当前库存、日均销量、到货天数、保质期天数、成本价</p>
         <p>2. 上传后系统会自动算出安全库存、订货点、建议补货量</p>
         <p>3. 同名商品将被导入数据覆盖</p>
       </div>
@@ -461,6 +640,16 @@ onMounted(() => {
         <el-button type="primary" :loading="importing" @click="doImport">开始导入</el-button>
       </template>
     </el-dialog>
+
+    <transition name="fade">
+      <button
+        v-show="showBackToTop"
+        class="back-to-top"
+        @click="scrollToTop"
+      >
+        ↑
+      </button>
+    </transition>
   </div>
 </template>
 
@@ -476,11 +665,34 @@ onMounted(() => {
 }
 .replenish-area {
   margin-bottom: 16px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.replenish-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--el-fill-color);
+  cursor: pointer;
+  user-select: none;
 }
 .replenish-title {
-  margin: 0 0 8px;
   font-size: 15px;
-  color: #303133;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.expand-icon {
+  transition: transform 0.3s;
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+}
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+.replenish-content {
+  padding: 8px 14px;
 }
 .item-name {
   font-weight: 600;
@@ -488,26 +700,26 @@ onMounted(() => {
 }
 .item-summary {
   margin-left: 8px;
-  color: #606266;
+  color: var(--foreground);
   font-size: 13px;
 }
 .explain p {
   margin: 4px 0;
-  color: #606266;
+  color: var(--foreground);
   font-size: 13px;
 }
 .answer {
   margin-top: 16px;
   padding: 12px;
-  background-color: #f5f7fa;
+  background-color: var(--muted);
   border-radius: 4px;
   white-space: pre-wrap;
-  color: #303133;
+  color: var(--foreground);
   font-size: 14px;
   line-height: 1.6;
 }
 .import-tips {
-  color: #606266;
+  color: var(--foreground);
   font-size: 13px;
   line-height: 1.8;
   margin-bottom: 12px;
@@ -520,31 +732,31 @@ onMounted(() => {
 }
 .import-result {
   padding: 12px;
-  background-color: #f5f7fa;
+  background-color: var(--muted);
   border-radius: 4px;
   font-size: 13px;
-  color: #303133;
+  color: var(--foreground);
 }
 .fail-msg {
-  color: #f56c6c;
+  color: var(--destructive);
   margin-top: 4px;
 }
 .form-tip {
   margin-left: 8px;
-  color: #909399;
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 .ai-calc-box {
   margin-top: 4px;
   padding: 12px 14px;
-  background-color: #f0f9eb;
-  border: 1px solid #e1f3d8;
+  background-color: var(--secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 .ai-calc-title {
   font-size: 14px;
   font-weight: 600;
-  color: #67c23a;
+  color: var(--primary);
   margin-bottom: 10px;
 }
 .ai-calc-row {
@@ -552,30 +764,77 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 4px 0;
-  color: #606266;
+  color: var(--foreground);
   font-size: 13px;
 }
 .ai-calc-row b {
-  color: #303133;
+  color: var(--foreground);
 }
 .ai-calc-hint {
-  color: #909399;
+  color: var(--muted-foreground);
   font-size: 13px;
   margin: 0;
 }
 .ai-calc-basis {
   margin-top: 6px;
-  border-top: 1px dashed #e1f3d8;
+  border-top: 1px dashed var(--border);
 }
 .ai-calc-basis p {
   margin: 4px 0;
-  color: #909399;
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.6;
+}
+.std-hint {
+  color: var(--chart-3) !important;
+  font-style: italic;
+}
+.eoq-hint {
+  color: var(--primary) !important;
+  font-style: italic;
 }
 @media (max-width: 600px) {
   .product-page {
     padding: 12px;
   }
+}
+
+/* 高亮商品行 - Element Plus 表格需要 :deep() 穿透 */
+:deep(.el-table .highlight-row > td) {
+  background-color: var(--secondary) !important;
+  animation: highlight-pulse 3s ease-out;
+}
+@keyframes highlight-pulse {
+  0% { background-color: var(--primary) !important; }
+  30% { background-color: var(--accent) !important; }
+  100% { background-color: transparent !important; }
+}
+
+/* 回到顶部按钮 */
+.back-to-top {
+  position: fixed;
+  right: 30px;
+  bottom: 30px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--el-color-primary);
+  color: #fff;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 999;
+  transition: opacity 0.3s, transform 0.3s;
+}
+.back-to-top:hover {
+  transform: translateY(-3px);
+  opacity: 0.9;
+}
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
 }
 </style>

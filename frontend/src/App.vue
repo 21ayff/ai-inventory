@@ -4,8 +4,9 @@ import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import ProductList from './components/ProductList.vue'
 import Dashboard from './components/Dashboard.vue'
-import Statistics from './components/Statistics.vue'
+import Analysis from './components/Analysis.vue'
 import ProfileDialog from './components/ProfileDialog.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
 
 const username = ref('')
 const password = ref('')
@@ -14,6 +15,7 @@ const token = ref(localStorage.getItem('token') || '')
 const currentUser = ref(localStorage.getItem('username') || '')
 const currentPage = ref('dashboard')
 const profileVisible = ref(false)
+const settingsVisible = ref(false)
 const isRegister = ref(false)
 const confirmPassword = ref('')
 
@@ -97,6 +99,8 @@ function handleLogout() {
 function handleUserCommand(cmd) {
   if (cmd === 'profile') {
     profileVisible.value = true
+  } else if (cmd === 'settings') {
+    settingsVisible.value = true
   } else if (cmd === 'logout') {
     handleLogout()
   }
@@ -164,7 +168,7 @@ function handleUserCommand(cmd) {
           <span
             :class="['nav-item', currentPage === 'stats' ? 'active' : '']"
             @click="currentPage = 'stats'"
-          >统计分析</span>
+          >数据分析</span>
         </nav>
       </div>
       <div class="user">
@@ -176,6 +180,7 @@ function handleUserCommand(cmd) {
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="profile">个人中心</el-dropdown-item>
+              <el-dropdown-item command="settings">EOQ 设置</el-dropdown-item>
               <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -184,8 +189,9 @@ function handleUserCommand(cmd) {
     </div>
     <Dashboard v-if="currentPage === 'dashboard'" />
     <ProductList v-else-if="currentPage === 'products'" />
-    <Statistics v-else />
+    <Analysis v-else />
     <ProfileDialog v-model="profileVisible" :username="currentUser" @logout="handleLogout" />
+    <SettingsDialog v-model="settingsVisible" />
   </div>
 </template>
 
@@ -195,31 +201,33 @@ function handleUserCommand(cmd) {
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--primary) 0%, #764ba2 100%);
 }
 .login-card {
   width: 360px;
   max-width: 90%;
   padding: 20px;
+  background-color: var(--card);
+  border-radius: var(--radius);
 }
 .title {
   text-align: center;
   margin-bottom: 20px;
-  color: #333;
+  color: var(--foreground);
 }
 .tips {
   text-align: center;
-  color: #999;
+  color: var(--muted-foreground);
   font-size: 13px;
   margin-top: 12px;
 }
 .link {
-  color: #409eff;
+  color: var(--primary);
   cursor: pointer;
   margin-left: 4px;
 }
 .main-page {
-  background-color: #ffffff;
+  background-color: var(--background);
   min-height: 100vh;
 }
 .header {
@@ -227,12 +235,13 @@ function handleUserCommand(cmd) {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--card);
 }
 .logo {
   font-size: 18px;
   font-weight: 600;
-  color: #303133;
+  color: var(--foreground);
 }
 .header-left {
   display: flex;
@@ -245,17 +254,18 @@ function handleUserCommand(cmd) {
 }
 .nav-item {
   padding: 6px 16px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   cursor: pointer;
-  color: #606266;
+  color: var(--muted-foreground);
   font-size: 14px;
+  transition: all 0.2s ease;
 }
 .nav-item:hover {
-  color: #409eff;
+  color: var(--primary);
 }
 .nav-item.active {
-  color: #ffffff;
-  background-color: #409eff;
+  color: var(--primary-foreground);
+  background-color: var(--primary);
 }
 .user {
   display: flex;
@@ -263,7 +273,7 @@ function handleUserCommand(cmd) {
   gap: 10px;
 }
 .username {
-  color: #606266;
+  color: var(--muted-foreground);
   cursor: pointer;
   display: flex;
   align-items: center;

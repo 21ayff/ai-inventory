@@ -26,3 +26,8 @@ backend/inventory.db
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 临时修复脚本（不需要提交）
+backend/backend.err
+backend/fix_config*.py
+

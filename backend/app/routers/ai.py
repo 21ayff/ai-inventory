@@ -4,11 +4,23 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Product
+from ..models import Category, Product
 from ..schemas import ReplenishItem, AskRequest, AskResponse
 from ..dependencies import get_current_user
+from ..stock_math import calc_stock_params, DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
+from ..sales_stats import calc_sales_std, detect_sales_trend
+from ..eoq import calc_eoq, get_order_cost, get_holding_cost_rate
 
 router = APIRouter(prefix="/api/ai", tags=["ai"], dependencies=[Depends(get_current_user)])
+
+
+def _category_strategy(db: Session, category_id: int | None):
+    """读取分类的库存策略，未选择分类时返回默认值"""
+    if category_id:
+        cat = db.query(Category).filter(Category.id == category_id).first()
+        if cat:
+            return cat.target_days, cat.z_score
+    return DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
 
 
 @router.get("/replenish", response_model=list[ReplenishItem])
@@ -26,16 +38,54 @@ def get_replenish_suggestions(db: Session = Depends(get_db)):
         else:
             continue
 
-        # 计算建议补货量
-        if p.eoq and p.eoq > 0:
-            suggest_qty = p.eoq
-            calc = f"补货量 = AI建议补货量 = {p.eoq} {p.unit}"
-        else:
-            suggest_qty = max(p.rop + p.min_stock - p.current_stock, 0)
-            calc = (
-                f"补货量 = 订货点 + 安全库存 - 当前库存 = "
-                f"{p.rop} + {p.min_stock} - {p.current_stock} = {suggest_qty} {p.unit}"
+        # 实时用新公式计算建议补货量，不直接使用数据库里的 p.eoq
+        target_days, z_score = _category_strategy(db, p.category_id)
+        # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
+        order_cost = get_order_cost(db)
+        holding_cost_rate = get_holding_cost_rate(db)
+        eoq_value = calc_eoq(p.daily_sales, p.cost_price, order_cost, holding_cost_rate)
+        # 查询历史销量标准差（数据不足时返回 None，自动回退到估算）
+        sales_std, active_days, _ = calc_sales_std(db, p.id)
+        # 查询销量趋势（动态预测）
+        trend, actual_daily, diff_rate = detect_sales_trend(db, p.id, p.daily_sales)
+        _, _, suggest_qty = calc_stock_params(
+            daily_sales=p.daily_sales,
+            lead_time_days=p.lead_time_days,
+            current_stock=p.current_stock,
+            category_target_days=target_days,
+            category_z_score=z_score,
+            shelf_life_days=p.shelf_life_days,
+            sales_std=sales_std,
+            eoq=eoq_value,
+        )
+        # 标注标准差来源：历史数据 or 估算
+        std_source = (
+            f"历史 {active_days} 天出库记录算得标准差 {sales_std}"
+            if sales_std is not None
+            else f"历史数据不足（{active_days} 天），用日均销量 × 20% 估算"
+        )
+        # EOQ 计算说明
+        eoq_desc = ""
+        if eoq_value > 0:
+            eoq_desc = (
+                f"；EOQ 经济订货量 = √(2 × 年需求 × 订货成本 / 持有成本) "
+                f"= √(2 × {p.daily_sales * 365} × {order_cost} / {p.cost_price * holding_cost_rate}) ≈ {eoq_value}"
             )
+        # 销量趋势提示
+        trend_desc = ""
+        if trend == "上升":
+            trend_desc = f"；销量趋势提示：近期实际日均销量 {actual_daily}，高于填写值 {p.daily_sales}，建议更新"
+        elif trend == "下降":
+            trend_desc = f"；销量趋势提示：近期实际日均销量 {actual_daily}，低于填写值 {p.daily_sales}，建议更新"
+        calc = (
+            f"补货量 = max(目标库存 - 当前库存, EOQ)，"
+            f"其中目标库存 = 日均销量 × {target_days}天"
+            + (f"，并受保质期约束" if p.shelf_life_days else "")
+            + f"，标准差来源：{std_source}"
+            + eoq_desc
+            + trend_desc
+            + f"，最终建议补货 {suggest_qty} {p.unit}"
+        )
 
         # 三段解释
         if status == "urgent":

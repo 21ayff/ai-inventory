@@ -11,17 +11,202 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  /* 明确设置背景色和文字色，避免深色模式下出现黑底黑字 */
-  background-color: #ffffff;
-  color: #303133;
-  color-scheme: light;
+  font-family: var(--font-sans);
+  background-color: var(--background);
+  color: var(--foreground);
+  color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Element Plus 主题覆盖 */
+:root {
+  --el-color-primary: var(--primary);
+  --el-color-primary-light-3: #7daaf7;
+  --el-color-primary-light-5: #a8c6fa;
+  --el-color-primary-light-7: #d3e3fd;
+  --el-color-primary-light-8: #e3edfd;
+  --el-color-primary-light-9: #eaf2fe;
+  --el-color-primary-dark-2: #357ae8;
+
+  --el-color-success: #34a853;
+  --el-color-warning: #fbbc05;
+  --el-color-danger: #ef4444;
+  --el-color-info: #7f8d9f;
+
+  --el-text-color-primary: var(--foreground);
+  --el-text-color-regular: var(--foreground);
+  --el-text-color-secondary: var(--muted-foreground);
+  --el-text-color-placeholder: var(--muted-foreground);
+  --el-text-color-disabled: var(--muted-foreground);
+
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
+  --el-border-color-extra-light: var(--border);
+
+  --el-fill-color: var(--muted);
+  --el-fill-color-light: var(--muted);
+  --el-fill-color-lighter: var(--popover);
+  --el-fill-color-extra-light: var(--popover);
+  --el-fill-color-blank: var(--card);
+
+  --el-bg-color: var(--background);
+  --el-bg-color-page: var(--background);
+  --el-bg-color-overlay: var(--popover);
+
+  --el-border-radius-base: var(--radius);
+  --el-border-radius-small: calc(var(--radius) - 4px);
+  --el-font-size-base: 14px;
+  --el-font-family: var(--font-sans);
+}
+
+html.dark {
+  --el-color-primary: var(--primary);
+  --el-color-primary-light-3: #fd5a78;
+  --el-color-primary-light-5: #fe889e;
+  --el-color-primary-light-7: #feb6c3;
+  --el-color-primary-light-8: #fecbd4;
+  --el-color-primary-light-9: #ffe0e6;
+  --el-color-primary-dark-2: #e02445;
+
+  --el-color-success: #baf6f0;
+  --el-color-warning: #fbeb35;
+  --el-color-danger: #ef4444;
+  --el-color-info: #949494;
+
+  --el-text-color-primary: var(--foreground);
+  --el-text-color-regular: var(--foreground);
+  --el-text-color-secondary: var(--muted-foreground);
+  --el-text-color-placeholder: var(--muted-foreground);
+  --el-text-color-disabled: var(--muted-foreground);
+
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
+  --el-border-color-extra-light: var(--border);
+
+  --el-fill-color: var(--muted);
+  --el-fill-color-light: var(--muted);
+  --el-fill-color-lighter: var(--popover);
+  --el-fill-color-extra-light: var(--popover);
+  --el-fill-color-blank: var(--card);
+
+  --el-bg-color: var(--background);
+  --el-bg-color-page: var(--background);
+  --el-bg-color-overlay: var(--popover);
+}
+
+/* 通用页面容器 */
+.page-container {
+  padding: 20px;
+}
+
+/* 统计卡片通用样式 */
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  transition: border-color 0.2s ease;
+}
+
+.metric-card:hover {
+  border-color: var(--primary);
+}
+
+.metric-card-label {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.metric-card-value {
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+/* 面板卡片 */
+.panel-card {
+  margin-bottom: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.panel-card .el-card__header {
+  font-weight: 600;
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+}
+
+/* 图表容器 */
+.chart-card {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+/* 工具栏 */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* 链接 */
+.google-link {
+  color: var(--primary);
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.google-link:hover {
+  opacity: 0.8;
+}
+
+/* 深色模式下的状态色 */
+html.dark .metric-warning .metric-card-value,
+.dark .metric-warning .metric-card-value {
+  color: #fbeb35;
+}
+
+html.dark .metric-in,
+.dark .metric-in {
+  color: #baf6f0;
+}
+
+html.dark .metric-out,
+.dark .metric-out {
+  color: #f1204a;
 }
 
 /* 手机端：弹窗自适应宽度 */
 @media (max-width: 600px) {
   .el-dialog {
     width: 92% !important;
+  }
+  .page-container {
+    padding: 12px;
+  }
+  .metric-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .metric-cards {
+    grid-template-columns: repeat(2, 1fr);
   }
 }

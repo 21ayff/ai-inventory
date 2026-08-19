@@ -154,11 +154,12 @@ async function changePassword() {
 }
 .info-label {
   width: 90px;
-  color: #909399;
+  color: var(--muted-foreground);
   font-size: 14px;
 }
 .info-value {
-  color: #303133;
+  color: var(--foreground);
   font-size: 14px;
+  font-weight: 500;
 }
 </style>
