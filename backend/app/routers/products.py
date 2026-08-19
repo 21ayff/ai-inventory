@@ -52,6 +52,8 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     """新增商品（安全库存/订货点/建议补货量由 AI 自动计算）"""
     if not data.name:
         raise HTTPException(status_code=400, detail="商品名称不能为空")
+    if not data.daily_sales or data.daily_sales <= 0:
+        raise HTTPException(status_code=400, detail="日均销量必须大于 0（新品请填写预估销量）")
 
     # 空字符串 SKU 视为未填写，转为 None 避免触发 unique 冲突
     if data.sku is not None:
@@ -285,6 +287,8 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     ).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
+    if data.daily_sales is not None and data.daily_sales <= 0:
+        raise HTTPException(status_code=400, detail="日均销量必须大于 0（新品请填写预估销量）")
 
     update_data = data.model_dump(exclude_unset=True)
 

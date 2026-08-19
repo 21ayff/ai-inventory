@@ -138,6 +138,10 @@ async function saveProduct() {
     ElMessage.warning('请输入商品名称')
     return
   }
+  if (!form.value.daily_sales || form.value.daily_sales <= 0) {
+    ElMessage.warning('请填写日均销量（新品请填写预估销量，用于计算安全库存和补货量）')
+    return
+  }
   const url = editingId.value ? `/api/products/${editingId.value}` : '/api/products'
   const method = editingId.value ? 'PUT' : 'POST'
   try {
@@ -522,9 +526,9 @@ onUnmounted(() => {
         <el-form-item label="当前库存">
           <el-input-number v-model="form.current_stock" :min="0" />
         </el-form-item>
-        <el-form-item label="日均销量">
-          <el-input-number v-model="form.daily_sales" :min="0" />
-          <span class="form-tip">件/天</span>
+        <el-form-item label="日均销量" required>
+          <el-input-number v-model="form.daily_sales" :min="0.01" />
+          <span class="form-tip">件/天（必填，新品请填写预估日均销量）</span>
         </el-form-item>
         <el-form-item label="到货天数">
           <el-input-number v-model="form.lead_time_days" :min="0" />

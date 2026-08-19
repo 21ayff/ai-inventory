@@ -16,7 +16,10 @@ from .models import Setting
 
 # 默认配置（当 Setting 表没有对应配置时使用）
 DEFAULT_ORDER_COST = 20.0       # 默认每次订货成本 20 元（便利店单SKU分摊成本）
-DEFAULT_HOLDING_COST_RATE = 0.25  # 默认持有成本率 25%
+DEFAULT_HOLDING_COST_RATE = 0.25  # 默认年持有成本率 25%（年化）
+
+# 年化天数：EOQ公式要求 D（年需求）和 H（年持有成本）时间单位必须一致
+ANNUAL_DAYS = 365
 
 
 def get_order_cost(db: Session) -> float:
@@ -62,8 +65,8 @@ def calc_eoq(
     if cost_price is None or cost_price <= 0:
         return 0.0
 
-    # 年需求量
-    annual_demand = daily_sales * 365
+    # 年需求量（日均销量 × 年化天数，与H保持同一时间单位）
+    annual_demand = daily_sales * ANNUAL_DAYS
 
     # 单位年持有成本
     holding_cost_per_unit = cost_price * holding_cost_rate
