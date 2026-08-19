@@ -112,8 +112,8 @@ def download_import_template():
     wb = Workbook()
     ws = wb.active
     ws.title = "商品导入模板"
-    ws.append(["商品名称", "SKU", "单位", "当前库存", "日均销量", "平均到货天数", "保质期天数", "成本价"])
-    ws.append(["示例商品", "SKU001", "个", 100, 10, 7, 90, 5.0])
+    ws.append(["商品名称", "SKU", "单位", "当前库存", "日均销量", "平均到货天数", "保质期天数", "成本价", "供应商名称", "供应商电话"])
+    ws.append(["示例商品", "SKU001", "个", 100, 10, 7, 90, 5.0, "张三粮油", "13800138000"])
 
     buf = BytesIO()
     wb.save(buf)
@@ -178,6 +178,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
         lead_time_days = parse_number(row[5] if len(row) > 5 else None)
         shelf_life_days = parse_optional_number(row[6] if len(row) > 6 else None)
         cost_price = parse_optional_number(row[7] if len(row) > 7 else None)
+        supplier_name = str(row[8]).strip() if len(row) > 8 and row[8] else None
+        supplier_phone = str(row[9]).strip() if len(row) > 9 and row[9] else None
 
         if not name:
             failed.append(f"第{i}行：商品名称为空")
@@ -228,6 +230,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
             existing.lead_time_days = lead_time_days
             existing.shelf_life_days = shelf_life_days
             existing.cost_price = cost_price
+            existing.supplier_name = supplier_name
+            existing.supplier_phone = supplier_phone
             existing.min_stock = min_stock
             existing.rop = rop
             existing.eoq = eoq
@@ -243,6 +247,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
                     lead_time_days=lead_time_days,
                     shelf_life_days=shelf_life_days,
                     cost_price=cost_price,
+                    supplier_name=supplier_name,
+                    supplier_phone=supplier_phone,
                     min_stock=min_stock,
                     rop=rop,
                     eoq=eoq,
