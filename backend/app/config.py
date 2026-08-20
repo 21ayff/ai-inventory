@@ -16,3 +16,8 @@ ALGORITHM = "HS256"
 
 # token 有效期（天）
 TOKEN_EXPIRE_DAYS = 7
+
+# 智谱 GLM 大模型 API Key（AI 库存管理员功能用）
+# 获取方式：注册 https://open.bigmodel.cn → 右上角"API密钥" → 创建并复制
+# 优先读环境变量 ZHIPU_API_KEY，没有就用下面引号里的值
+ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")

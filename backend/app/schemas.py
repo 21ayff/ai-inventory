@@ -135,14 +135,24 @@ class ReplenishItem(BaseModel):
     calc_process: str
 
 
-# ---------- AI 问答 ----------
+# ---------- AI 库存管理员对话 ----------
 
-class AskRequest(BaseModel):
-    question: str
+class ChatRequest(BaseModel):
+    message: str
 
 
-class AskResponse(BaseModel):
+class ChatResponse(BaseModel):
     answer: str
+
+
+class ChatHistoryItem(BaseModel):
+    """一条历史对话记录（一问一答）"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    question: str
+    answer: str
+    created_at: datetime | None = None
 
 
 # ---------- 设置 ----------

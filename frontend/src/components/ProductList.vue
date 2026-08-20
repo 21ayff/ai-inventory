@@ -233,38 +233,6 @@ async function loadSuggestions() {
   }
 }
 
-// ---------- AI 问答 ----------
-const askDialogVisible = ref(false)
-const askQuestion = ref('')
-const askAnswer = ref('')
-const askLoading = ref(false)
-
-function openAsk() {
-  askQuestion.value = ''
-  askAnswer.value = ''
-  askDialogVisible.value = true
-}
-
-async function askAi() {
-  if (!askQuestion.value.trim()) {
-    ElMessage.warning('请输入问题')
-    return
-  }
-  askLoading.value = true
-  try {
-    const res = await apiFetch('/api/ai/ask', {
-      method: 'POST',
-      body: JSON.stringify({ question: askQuestion.value }),
-    })
-    const data = await res.json()
-    askAnswer.value = data.answer
-  } catch (e) {
-    ElMessage.error('网络错误，请确认后端已启动')
-  } finally {
-    askLoading.value = false
-  }
-}
-
 // ---------- 导入 Excel ----------
 const importVisible = ref(false)
 const importFile = ref(null)
@@ -481,7 +449,6 @@ onUnmounted(() => {
       />
       <el-button type="primary" @click="openCreate">新增商品</el-button>
       <el-button @click="openImport">导入 Excel</el-button>
-      <el-button type="success" @click="openAsk">AI问答</el-button>
     </div>
 
     <el-table :data="products" v-loading="loading" border :row-class-name="rowClassName" size="small">
@@ -614,23 +581,6 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="askDialogVisible" title="AI库存问答" width="500px">
-      <el-input
-        v-model="askQuestion"
-        placeholder="例如：哪些商品缺货？"
-        @keyup.enter="askAi"
-      />
-      <el-button
-        type="primary"
-        :loading="askLoading"
-        style="margin-top: 10px; width: 100%"
-        @click="askAi"
-      >
-        提问
-      </el-button>
-      <div v-if="askAnswer" class="answer">{{ askAnswer }}</div>
-    </el-dialog>
-
     <el-dialog v-model="importVisible" title="导入 Excel" width="500px">
       <div class="import-tips">
         <p>1. 先下载模板，按模板填写：商品名称、SKU、单位、当前库存、日均销量、到货天数、保质期天数、成本价</p>
@@ -720,16 +670,6 @@ onUnmounted(() => {
   margin: 4px 0;
   color: var(--foreground);
   font-size: 13px;
-}
-.answer {
-  margin-top: 16px;
-  padding: 12px;
-  background-color: var(--muted);
-  border-radius: 4px;
-  white-space: pre-wrap;
-  color: var(--foreground);
-  font-size: 14px;
-  line-height: 1.6;
 }
 .import-tips {
   color: var(--foreground);
@@ -838,7 +778,7 @@ onUnmounted(() => {
 .back-to-top {
   position: fixed;
   right: 30px;
-  bottom: 30px;
+  bottom: 96px;
   width: 44px;
   height: 44px;
   border-radius: 50%;

@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard.vue'
 import Analysis from './components/Analysis.vue'
 import ProfileDialog from './components/ProfileDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
+import AiChat from './components/AiChat.vue'
 
 const username = ref('')
 const password = ref('')
@@ -192,6 +193,7 @@ function handleUserCommand(cmd) {
     <Analysis v-else />
     <ProfileDialog v-model="profileVisible" :username="currentUser" @logout="handleLogout" />
     <SettingsDialog v-model="settingsVisible" />
+    <AiChat />
   </div>
 </template>
 
