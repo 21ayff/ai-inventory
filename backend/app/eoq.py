@@ -22,9 +22,11 @@ DEFAULT_HOLDING_COST_RATE = 0.25  # 默认年持有成本率 25%（年化）
 ANNUAL_DAYS = 365
 
 
-def get_order_cost(db: Session) -> float:
-    """从 Setting 表读取每次订货成本，读取失败返回默认值"""
-    setting = db.query(Setting).filter(Setting.key == "order_cost").first()
+def get_order_cost(db: Session, user_id: int) -> float:
+    """从 Setting 表读取当前账号的每次订货成本，读取失败返回默认值"""
+    setting = db.query(Setting).filter(
+        Setting.key == "order_cost", Setting.user_id == user_id
+    ).first()
     if setting:
         try:
             return float(setting.value)
@@ -33,9 +35,11 @@ def get_order_cost(db: Session) -> float:
     return DEFAULT_ORDER_COST
 
 
-def get_holding_cost_rate(db: Session) -> float:
-    """从 Setting 表读取持有成本率，读取失败返回默认值"""
-    setting = db.query(Setting).filter(Setting.key == "holding_cost_rate").first()
+def get_holding_cost_rate(db: Session, user_id: int) -> float:
+    """从 Setting 表读取当前账号的持有成本率，读取失败返回默认值"""
+    setting = db.query(Setting).filter(
+        Setting.key == "holding_cost_rate", Setting.user_id == user_id
+    ).first()
     if setting:
         try:
             return float(setting.value)

@@ -1,7 +1,11 @@
-"""数据库模型（表结构）"""
+"""数据库模型（表结构）
+
+数据隔离设计：除用户表外，所有业务表都带 user_id 字段，
+每个账号只能看到和操作自己的数据。
+"""
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, UniqueConstraint
 
 from .database import Base
 
@@ -21,9 +25,10 @@ class User(Base):
 
 
 class Category(Base):
-    """分类表"""
+    """分类表（按账号隔离）"""
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     # 库存策略：目标库存天数（覆盖周期）和服务水平 Z 值
@@ -32,11 +37,16 @@ class Category(Base):
 
 
 class Product(Base):
-    """商品表"""
+    """商品表（按账号隔离，SKU 同账号内唯一）"""
     __tablename__ = "products"
+    __table_args__ = (
+        # SKU 在同一账号内唯一，不同账号可以用相同的 SKU
+        UniqueConstraint("user_id", "sku", name="uq_user_sku"),
+    )
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
-    sku = Column(String, unique=True, index=True, nullable=True)
+    sku = Column(String, index=True, nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     image = Column(String, nullable=True)
     unit = Column(String, default="个")
@@ -57,9 +67,10 @@ class Product(Base):
 
 
 class StockRecord(Base):
-    """库存记录表（入库/出库/调整/盘点）"""
+    """库存记录表（入库/出库/调整/盘点，按账号隔离）"""
     __tablename__ = "stock_records"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     type = Column(String, nullable=False)  # in / out / adjust / check
     quantity = Column(Float, nullable=False)
@@ -82,9 +93,10 @@ class OperationLog(Base):
 
 
 class AiSuggestion(Base):
-    """AI建议表"""
+    """AI建议表（按账号隔离）"""
     __tablename__ = "ai_suggestions"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     type = Column(String, nullable=True)  # 补货 / 异常
     content = Column(Text, nullable=True)
@@ -96,17 +108,23 @@ class AiSuggestion(Base):
 
 
 class AiChatHistory(Base):
-    """AI问答记录表"""
+    """AI问答记录表（按账号隔离）"""
     __tablename__ = "ai_chat_history"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     question = Column(Text, nullable=True)
     answer = Column(Text, nullable=True)
     created_at = Column(DateTime, default=now)
 
 
 class Setting(Base):
-    """设置表"""
+    """设置表（按账号隔离，key 同账号内唯一）"""
     __tablename__ = "settings"
+    __table_args__ = (
+        # 同一账号内每个配置项唯一，不同账号各自保存一份
+        UniqueConstraint("user_id", "key", name="uq_user_key"),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, unique=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    key = Column(String, nullable=False)
     value = Column(Text, nullable=True)

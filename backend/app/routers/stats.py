@@ -1,4 +1,4 @@
-"""统计分析接口"""
+"""统计分析接口（数据按账号隔离）"""
 from collections import defaultdict
 from datetime import datetime
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Product, StockRecord
+from ..models import Product, StockRecord, User
 from ..dependencies import get_current_user
 
 router = APIRouter(prefix="/api/stats", tags=["stats"], dependencies=[Depends(get_current_user)])
@@ -39,10 +39,17 @@ def _time_key(dt, range_type):
 
 
 @router.get("/overview")
-def get_overview(range: str = "day", db: Session = Depends(get_db)):
-    """统计分析总览，range 支持 day / week / month"""
-    records = db.query(StockRecord).order_by(StockRecord.id.asc()).all()
-    products = db.query(Product).filter(Product.deleted == False).all()
+def get_overview(range: str = "day", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """统计分析总览，range 支持 day / week / month（只统计当前账号）"""
+    records = (
+        db.query(StockRecord)
+        .filter(StockRecord.user_id == user.id)
+        .order_by(StockRecord.id.asc())
+        .all()
+    )
+    products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user.id
+    ).all()
     name_map = {p.id: p.name for p in products}
 
     # 1. 统计汇总

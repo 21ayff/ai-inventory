@@ -1,11 +1,11 @@
-"""首页仪表盘统计接口"""
+"""首页仪表盘统计接口（数据按账号隔离）"""
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Product, StockRecord
+from ..models import Product, StockRecord, User
 from .ai import get_replenish_suggestions
 from ..dependencies import get_current_user
 
@@ -22,9 +22,11 @@ def _date_str(dt):
 
 
 @router.get("/summary")
-def get_summary(db: Session = Depends(get_db)):
-    """返回首页仪表盘所需的统计数据和图表数据"""
-    products = db.query(Product).filter(Product.deleted == False).all()
+def get_summary(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """返回首页仪表盘所需的统计数据和图表数据（只统计当前账号）"""
+    products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user.id
+    ).all()
 
     # 1. 统计总览
     product_count = len(products)
@@ -46,9 +48,10 @@ def get_summary(db: Session = Depends(get_db)):
         reverse=True,
     )[:10]
 
-    # 3. 出入库趋势（折线图）：最近 7 天每天入库/出库总量
+    # 3. 出入库趋势（折线图）：最近 7 天每天入库/出库总量（只查当前账号的记录）
     records = (
         db.query(StockRecord)
+        .filter(StockRecord.user_id == user.id)
         .order_by(StockRecord.id.desc())
         .limit(500)
         .all()
@@ -77,8 +80,8 @@ def get_summary(db: Session = Depends(get_db)):
             }
         )
 
-    # 4. 补货告警列表（复用 AI 补货提醒逻辑）
-    suggestions = get_replenish_suggestions(db)
+    # 4. 补货告警列表（复用 AI 补货提醒逻辑，只看当前账号）
+    suggestions = get_replenish_suggestions(db, user)
     replenish_list = [
         {
             "product_name": s.product_name,

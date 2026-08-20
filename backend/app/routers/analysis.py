@@ -1,4 +1,4 @@
-"""数据分析接口
+"""数据分析接口（数据按账号隔离）
 
 覆盖便利店日常经营的三个核心动作：
 1. 今日生意：今天赚了多少钱（销售额、毛利、最好卖商品）
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Product, StockRecord
+from ..models import Product, StockRecord, User
 from ..schemas import (
     AnalysisOverview,
     TodayBusiness,
@@ -44,20 +44,23 @@ def _today_range():
     return start, end
 
 
-def _build_today(db: Session) -> TodayBusiness:
-    """板块1：今日生意"""
+def _build_today(db: Session, user_id: int) -> TodayBusiness:
+    """板块1：今日生意（只统计当前账号的数据）"""
     start, end = _today_range()
 
-    # 今日出库记录
+    # 今日出库记录（只查当前账号的）
     records = (
         db.query(StockRecord)
         .filter(StockRecord.type == "out")
+        .filter(StockRecord.user_id == user_id)
         .filter(StockRecord.created_at >= start)
         .filter(StockRecord.created_at < end)
         .all()
     )
 
-    products = db.query(Product).filter(Product.deleted == False).all()
+    products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user_id
+    ).all()
     product_map = {p.id: p for p in products}
 
     today_sales = 0.0       # 销售额（按成本价估算，因无售价字段）
@@ -103,12 +106,14 @@ def _build_today(db: Session) -> TodayBusiness:
     )
 
 
-def _build_restock(db: Session) -> RestockList:
-    """板块2：该进货了（库存 < 订货点的商品）"""
-    products = db.query(Product).filter(Product.deleted == False).all()
+def _build_restock(db: Session, user_id: int) -> RestockList:
+    """板块2：该进货了（库存 < 订货点的商品，只看当前账号）"""
+    products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user_id
+    ).all()
 
-    order_cost = get_order_cost(db)
-    holding_cost_rate = get_holding_cost_rate(db)
+    order_cost = get_order_cost(db, user_id)
+    holding_cost_rate = get_holding_cost_rate(db, user_id)
 
     items = []
     for p in products:
@@ -148,17 +153,20 @@ def _build_restock(db: Session) -> RestockList:
     return RestockList(count=len(items), items=items, total_cost=total)
 
 
-def _build_money_stuck(db: Session) -> MoneyStuck:
-    """板块3：钱压在哪"""
-    products = db.query(Product).filter(Product.deleted == False).all()
+def _build_money_stuck(db: Session, user_id: int) -> MoneyStuck:
+    """板块3：钱压在哪（只统计当前账号的商品）"""
+    products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user_id
+    ).all()
     product_ids = [p.id for p in products]
 
-    # 查找每个商品最后一次出库时间
+    # 查找每个商品最后一次出库时间（只查当前账号的出库记录）
     last_out_map = {}
     if product_ids:
         out_records = (
             db.query(StockRecord)
             .filter(StockRecord.type == "out")
+            .filter(StockRecord.user_id == user_id)
             .filter(StockRecord.product_id.in_(product_ids))
             .order_by(StockRecord.product_id, StockRecord.created_at.desc())
             .all()
@@ -219,9 +227,9 @@ def _build_money_stuck(db: Session) -> MoneyStuck:
 
 
 @router.get("/overview", response_model=AnalysisOverview)
-def get_analysis_overview(db: Session = Depends(get_db)):
-    """数据分析总览：今日生意 + 该进货了 + 钱压在哪"""
-    today = _build_today(db)
-    restock = _build_restock(db)
-    money_stuck = _build_money_stuck(db)
+def get_analysis_overview(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """数据分析总览：今日生意 + 该进货了 + 钱压在哪（只统计当前账号）"""
+    today = _build_today(db, user.id)
+    restock = _build_restock(db, user.id)
+    money_stuck = _build_money_stuck(db, user.id)
     return AnalysisOverview(today=today, restock=restock, money_stuck=money_stuck)

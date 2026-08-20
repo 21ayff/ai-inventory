@@ -1,4 +1,4 @@
-"""商品管理接口"""
+"""商品管理接口（数据按账号隔离）"""
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from openpyxl import Workbook, load_workbook
 
 from ..database import get_db
-from ..models import Category, Product
+from ..models import Category, Product, User
 from ..schemas import ProductCreate, ProductUpdate, ProductOut
 from ..dependencies import get_current_user
 from ..stock_math import calc_stock_params, DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
@@ -18,10 +18,12 @@ from ..eoq import calc_eoq, get_order_cost, get_holding_cost_rate
 router = APIRouter(prefix="/api/products", tags=["products"], dependencies=[Depends(get_current_user)])
 
 
-def _category_strategy(db: Session, category_id: int | None):
-    """读取分类的库存策略，未选择分类时返回默认值"""
+def _category_strategy(db: Session, category_id: int | None, user_id: int):
+    """读取分类的库存策略（只查当前账号的分类），未选择分类时返回默认值"""
     if category_id:
-        cat = db.query(Category).filter(Category.id == category_id).first()
+        cat = db.query(Category).filter(
+            Category.id == category_id, Category.user_id == user_id
+        ).first()
         if cat:
             return cat.target_days, cat.z_score
     return DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
@@ -32,9 +34,10 @@ def list_products(
     search: str = "",
     stock_filter: str = "",
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """商品列表，支持搜索和库存筛选"""
-    query = db.query(Product).filter(Product.deleted == False)
+    """商品列表，支持搜索和库存筛选（只返回当前账号的商品）"""
+    query = db.query(Product).filter(Product.deleted == False, Product.user_id == user.id)
 
     if search:
         query = query.filter(
@@ -48,7 +51,7 @@ def list_products(
 
 
 @router.post("", response_model=ProductOut)
-def create_product(data: ProductCreate, db: Session = Depends(get_db)):
+def create_product(data: ProductCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """新增商品（安全库存/订货点/建议补货量由 AI 自动计算）"""
     if not data.name:
         raise HTTPException(status_code=400, detail="商品名称不能为空")
@@ -63,16 +66,18 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
 
     if data.sku:
         exists = db.query(Product).filter(
-            Product.sku == data.sku, Product.deleted == False
+            Product.sku == data.sku,
+            Product.user_id == user.id,
+            Product.deleted == False,
         ).first()
         if exists:
             raise HTTPException(status_code=400, detail="SKU 已存在")
 
     # 读取分类策略，自动计算三个专业参数
-    target_days, z_score = _category_strategy(db, data.category_id)
-    # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
-    order_cost = get_order_cost(db)
-    holding_cost_rate = get_holding_cost_rate(db)
+    target_days, z_score = _category_strategy(db, data.category_id, user.id)
+    # 读取当前账号的订货成本和持有成本率，计算经济订货量 EOQ
+    order_cost = get_order_cost(db, user.id)
+    holding_cost_rate = get_holding_cost_rate(db, user.id)
     eoq_value = calc_eoq(data.daily_sales, data.cost_price, order_cost, holding_cost_rate)
     # 新增商品时还没有历史出库记录，sales_std 传 None，自动回退到估算（日均销量 × 20%）
     min_stock, rop, eoq = calc_stock_params(
@@ -87,6 +92,7 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     )
 
     product = Product(
+        user_id=user.id,
         name=data.name,
         sku=data.sku,
         category_id=data.category_id,
@@ -129,8 +135,12 @@ def download_import_template():
 
 
 @router.post("/import")
-async def import_products(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """从 Excel 批量导入商品，按名称覆盖更新已有商品"""
+async def import_products(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """从 Excel 批量导入商品，按名称覆盖更新已有商品（只操作当前账号的商品）"""
     content = await file.read()
     try:
         wb = load_workbook(BytesIO(content))
@@ -192,10 +202,10 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
             continue
 
         # 导入时不含分类信息，使用默认策略计算三个专业参数
-        target_days, z_score = _category_strategy(db, None)
-        # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
-        order_cost = get_order_cost(db)
-        holding_cost_rate = get_holding_cost_rate(db)
+        target_days, z_score = _category_strategy(db, None, user.id)
+        # 读取当前账号的订货成本和持有成本率，计算经济订货量 EOQ
+        order_cost = get_order_cost(db, user.id)
+        holding_cost_rate = get_holding_cost_rate(db, user.id)
         eoq_value = calc_eoq(daily_sales, cost_price, order_cost, holding_cost_rate)
         min_stock, rop, eoq = calc_stock_params(
             daily_sales=daily_sales,
@@ -207,15 +217,18 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
             eoq=eoq_value,
         )
 
-        # 按名称查找已有商品
+        # 按名称查找当前账号的已有商品
         existing = db.query(Product).filter(
-            Product.name == name, Product.deleted == False
+            Product.name == name,
+            Product.user_id == user.id,
+            Product.deleted == False,
         ).first()
 
-        # SKU 唯一性检查（排除当前正在更新的商品）
+        # SKU 唯一性检查（同账号内，排除当前正在更新的商品）
         if sku:
             sku_exists = db.query(Product).filter(
                 Product.sku == sku,
+                Product.user_id == user.id,
                 Product.deleted == False,
                 Product.id != (existing.id if existing else -1),
             ).first()
@@ -241,6 +254,7 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
             # 新增商品
             db.add(
                 Product(
+                    user_id=user.id,
                     name=name,
                     sku=sku,
                     unit=unit,
@@ -269,10 +283,12 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(ge
 
 
 @router.get("/{product_id}", response_model=ProductOut)
-def get_product(product_id: int, db: Session = Depends(get_db)):
-    """商品详情"""
+def get_product(product_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """商品详情（只能查看当前账号的商品）"""
     product = db.query(Product).filter(
-        Product.id == product_id, Product.deleted == False
+        Product.id == product_id,
+        Product.user_id == user.id,
+        Product.deleted == False,
     ).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
@@ -280,10 +296,12 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{product_id}", response_model=ProductOut)
-def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(get_db)):
+def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """编辑商品（安全库存/订货点/建议补货量由 AI 自动计算）"""
     product = db.query(Product).filter(
-        Product.id == product_id, Product.deleted == False
+        Product.id == product_id,
+        Product.user_id == user.id,
+        Product.deleted == False,
     ).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
@@ -301,6 +319,7 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     if update_data.get("sku"):
         exists = db.query(Product).filter(
             Product.sku == update_data["sku"],
+            Product.user_id == user.id,
             Product.id != product_id,
             Product.deleted == False,
         ).first()
@@ -311,10 +330,10 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
         setattr(product, key, value)
 
     # 读取分类策略，重新计算库存参数（日均销量为 0 时三个参数都归 0）
-    target_days, z_score = _category_strategy(db, product.category_id)
-    # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
-    order_cost = get_order_cost(db)
-    holding_cost_rate = get_holding_cost_rate(db)
+    target_days, z_score = _category_strategy(db, product.category_id, user.id)
+    # 读取当前账号的订货成本和持有成本率，计算经济订货量 EOQ
+    order_cost = get_order_cost(db, user.id)
+    holding_cost_rate = get_holding_cost_rate(db, user.id)
     eoq_value = calc_eoq(product.daily_sales, product.cost_price, order_cost, holding_cost_rate)
     # 查询历史销量标准差（数据不足时返回 None，自动回退到估算）
     sales_std, _, _ = calc_sales_std(db, product.id)
@@ -335,10 +354,12 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
-    """删除商品（软删除）"""
+def delete_product(product_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """删除商品（软删除，只能删除当前账号的商品）"""
     product = db.query(Product).filter(
-        Product.id == product_id, Product.deleted == False
+        Product.id == product_id,
+        Product.user_id == user.id,
+        Product.deleted == False,
     ).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")

@@ -1,10 +1,10 @@
-"""AI 功能接口"""
+"""AI 功能接口（数据按账号隔离）"""
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Category, Product
+from ..models import Category, Product, User
 from ..schemas import ReplenishItem, AskRequest, AskResponse
 from ..dependencies import get_current_user
 from ..stock_math import calc_stock_params, DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
@@ -14,19 +14,23 @@ from ..eoq import calc_eoq, get_order_cost, get_holding_cost_rate
 router = APIRouter(prefix="/api/ai", tags=["ai"], dependencies=[Depends(get_current_user)])
 
 
-def _category_strategy(db: Session, category_id: int | None):
-    """读取分类的库存策略，未选择分类时返回默认值"""
+def _category_strategy(db: Session, category_id: int | None, user_id: int):
+    """读取分类的库存策略（只查当前账号的分类），未选择分类时返回默认值"""
     if category_id:
-        cat = db.query(Category).filter(Category.id == category_id).first()
+        cat = db.query(Category).filter(
+            Category.id == category_id, Category.user_id == user_id
+        ).first()
         if cat:
             return cat.target_days, cat.z_score
     return DEFAULT_TARGET_DAYS, DEFAULT_Z_SCORE
 
 
 @router.get("/replenish", response_model=list[ReplenishItem])
-def get_replenish_suggestions(db: Session = Depends(get_db)):
-    """AI 补货提醒：扫描所有商品，返回需要补货的商品及建议"""
-    products = db.query(Product).filter(Product.deleted == False).all()
+def get_replenish_suggestions(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """AI 补货提醒：扫描当前账号的商品，返回需要补货的商品及建议"""
+    products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user.id
+    ).all()
     suggestions = []
 
     for p in products:
@@ -39,10 +43,10 @@ def get_replenish_suggestions(db: Session = Depends(get_db)):
             continue
 
         # 实时用新公式计算建议补货量，不直接使用数据库里的 p.eoq
-        target_days, z_score = _category_strategy(db, p.category_id)
-        # 读取全局订货成本和持有成本率，计算经济订货量 EOQ
-        order_cost = get_order_cost(db)
-        holding_cost_rate = get_holding_cost_rate(db)
+        target_days, z_score = _category_strategy(db, p.category_id, user.id)
+        # 读取当前账号的订货成本和持有成本率，计算经济订货量 EOQ
+        order_cost = get_order_cost(db, user.id)
+        holding_cost_rate = get_holding_cost_rate(db, user.id)
         eoq_value = calc_eoq(p.daily_sales, p.cost_price, order_cost, holding_cost_rate)
         # 查询历史销量标准差（数据不足时返回 None，自动回退到估算）
         sales_std, active_days, _ = calc_sales_std(db, p.id)
@@ -127,10 +131,12 @@ def get_replenish_suggestions(db: Session = Depends(get_db)):
 
 
 @router.post("/ask", response_model=AskResponse)
-def ask(data: AskRequest, db: Session = Depends(get_db)):
-    """AI 库存问答（规则匹配）"""
+def ask(data: AskRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """AI 库存问答（规则匹配，只查当前账号的商品）"""
     question = data.question.strip()
-    all_products = db.query(Product).filter(Product.deleted == False).all()
+    all_products = db.query(Product).filter(
+        Product.deleted == False, Product.user_id == user.id
+    ).all()
 
     # 1. 先看是否提到某个具体商品
     target = None
@@ -174,7 +180,7 @@ def ask(data: AskRequest, db: Session = Depends(get_db)):
     # 4. 库存总量
     if any(k in question for k in ["总量", "总共", "一共", "总计", "总数"]):
         total = db.query(func.sum(Product.current_stock)).filter(
-            Product.deleted == False
+            Product.deleted == False, Product.user_id == user.id
         ).scalar() or 0
         return AskResponse(answer=f"当前所有商品的库存总量为 {total}。")
 
